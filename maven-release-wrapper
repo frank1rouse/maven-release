@@ -1,0 +1,486 @@
+#!/usr/bin/python
+'''
+Created on Nov 13, 2017
+
+@author: rousef
+'''
+
+import os
+import sys
+import stat
+import time
+import shutil
+import argparse
+import platform
+import subprocess
+from chainmap import  ChainMap
+from StringIO import StringIO
+from ConfigParser import ConfigParser
+
+
+# This utility script will not work without the following utilities available from the command line.
+# git  - Nothing particular about the version.
+# curl - Again nothing particular about the version
+# hub  - Command line utility from github that allows you to create pull requests from the command line.
+#        Available from https://github.com/github/hub
+# In order to better use this program store your credentials in the git hub store.
+# Follow the list of commands below.
+#
+# The clone command will prompt you for credentials for github. The config command
+# will save the credentials in the git global store
+#
+#
+# git clone https://github.com/dellemc-symphony/vcenter-adapter-parent.git
+# git config --global credential.helper store
+#
+# git clone https://eos2git.cec.lab.emc.com/VCE-Symphony/connect-home-service.git
+# git config --global credential.helper store
+#
+# If you are on a shared machine put a timeout on how long git will cache the credentials like below
+# git config --global credential.helper 'cache --timeout=3600'
+
+
+def getArguments():
+    # Program Internal settings
+    # I know that it is slower to load this way but it is more explicit and readable in my opinion
+    program_defaults = {}
+    program_defaults['original_source_branch'] = 'master'
+
+    # Property File settings
+    property_file_name = os.path.splitext(os.path.basename(__file__))[0] + '.props'
+    property_file_path = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(property_file_name))) + os.sep + property_file_name
+    property_file_properties = {}
+    #If no property file exists, don't sweat it just keep going.
+    try:
+        config = ConfigParser()
+        with open(property_file_path) as stream:
+            stream = StringIO("[root]\n" + stream.read())
+        config.readfp(stream)
+        property_file_properties =  dict(config.items('root'))
+    except IOError:
+        pass
+
+    # Command Line settings
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-repo', '--repository',             help='Repository in which changes will be made. Full https url required.')
+    parser.add_argument('-lb',   '--local_branch',           help='Local branch in which changes will be made.')
+    parser.add_argument('-osb',  '--original_source_branch', help='Original source branch. Defaults to "master".')
+    parser.add_argument('-sb',   '--stable_branch',          help='Stable branch to which pull request will be made.')
+    parser.add_argument('-nr',   '--new_release',            help='New release number.')
+    parser.add_argument('-nsr',  '--new_snapshot_release',   help='New snapshot release number.')
+    namespace = parser.parse_args()
+    # Create a dictionary of the given parser command line inputs
+    command_line_args = {k:v for k,v in vars(namespace).items() if v}
+
+    # Now create a chainmap of all the dictionaries in the order of precedence.
+    return ChainMap(command_line_args, os.environ, property_file_properties, program_defaults)
+
+def help():
+    print 'Required parameters'
+    print '-repo or --repository             Repository in which changes will be made. Full https url required.'
+    print '-lb   or --local_branch           Local branch in which changes will be made.'
+    print '-sb   or --stable_branch          Stable branch to which pull request will be made.'
+    print '-nr   or --new_release            New release number.'
+    print '-nsr  or --new_snapshot_release   New snapshot release number.'
+    print ''
+    print 'Optional parameter'
+    print '-osb   or --original_source_branch   Original source branch. Defaults to "master".'
+    print ''
+
+
+def runExternalCommand(cmd):
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
+    (output, err) = p.communicate()
+    if p.returncode != 0:
+        print '********************************************************************************'
+        print 'Error running command "{}"'.format(cmd)
+        print '********************************************************************************'
+        if output:
+            print 'Stadard output'
+            lines = output.split('\n')
+            for line in lines:
+                print line
+        if err:
+            print ''
+            print 'Error output'
+            lines = err.split('\n')
+            for line in lines:
+                print line
+        raise Exception('Command Failure')
+    return (output, err)
+
+
+# Use this to remove read only files in windows.
+def del_rw(action, name, exc):
+    os.chmod(name, stat.S_IWRITE)
+    os.remove(name)
+
+
+def get_out_and_remove_local_git_repository():
+    os.chdir('..')
+    shutil.rmtree(REPOSITORY_NAME, onerror=del_rw)
+
+
+def cloneRepository(repository):
+
+    # Grab the repository name
+    try:
+        # Make this a global so we can utilize it in the main function
+        global REPOSITORY_NAME
+        REPOSITORY_NAME = repository.split('/')[4].split('.')[0]
+    except:
+        print ''
+        print 'Malformed repository URL = "{}"'.format(repository)
+        exit(1)
+    if os.path.exists(os.path.join(os.getcwd(), REPOSITORY_NAME)):
+        print ''
+        print 'A directory for repository "{}" already exists. '.format(REPOSITORY_NAME)
+        print 'This must be deleted before the process can continue.'
+        exit(1)
+    try:
+        (output, err) = runExternalCommand('git clone {}'.format(repository))
+    except:
+        exit(1)
+
+
+def getLocalGeneratedArtifacts():
+    locally_generated_artifacts = {}
+    (output, err) = ('','')
+    try:
+        (output, err) = runExternalCommand('mvn --also-make dependency:tree')
+    except:
+        get_out_and_remove_local_git_repository()
+        exit(1)
+    lines = output.split('\n')
+    # The information we need is following the matched line
+    grab_next_line = False;
+    for line in lines:
+        # Split the line into words
+        split_line = line.split()
+        if grab_next_line:
+            grab_next_line = False
+            locally_generated_artifacts[split_line[1]] = '1'
+        else:
+            # To avoid empty lines
+            if split_line:
+                # This eliminates download lines and the like
+                if split_line[0] == '[INFO]':
+                    # Some INFO lines are blank so skip those
+                    if len(split_line) > 2:
+                        # Use startswith to avoid issues with the version of the plugin
+                        if split_line[2].startswith('maven-dependency-plugin'):
+                            grab_next_line = True
+    return locally_generated_artifacts
+
+
+def getMavenDependentArtifacts(excluded_artifacts):
+    # Create a dictionary to hold the dependent modules.
+    # A dictionary hash will automatically remove duplicates
+    dependent_artifacts = {}
+
+    (output, err) = ('','')
+    try:
+        (output, err) = runExternalCommand('mvn dependency:list')
+    except:
+        get_out_and_remove_local_git_repository()
+        exit(1)
+
+    # Output is a single line with line breaks.
+    # Break this out into a list of lines and sort to better deal with the output
+    lines = output.split('\n')
+    lines.sort()
+
+    for line in lines:
+        # Split the line into words
+        split_line = line.split()
+        # To avoid empty lines
+        if split_line:
+            # This eliminates download lines and the like
+            if split_line[0] == '[INFO]':
+                # Some INFO lines are blank so skip those
+                if len(split_line) > 1:
+                    # This indicates that we have finished with the dependent artifacts
+                    if split_line[1] == '---':
+                        break
+                    # Ignore the none line.
+                    if split_line[1] != 'none':
+                        artifact_split = split_line[1].split(':')
+                        artifact = '{}:{}:{}:{}'.format(artifact_split[0], artifact_split[1], artifact_split[2], artifact_split[3])
+                        # Exclude locally generated artifacts as they will be updated by the release process.
+                        if artifact not in excluded_artifacts:
+                            dependent_artifacts[artifact] = '1'
+    return dependent_artifacts
+
+
+def main():
+
+
+    # Initialize the return code to 0
+    return_code = 0
+
+    # Lets pull all of the arguments at once to force an error early if not available.
+    args = getArguments()
+    repository             = ''
+    new_release            = ''
+    local_branch_name      = ''
+    stable_branch          = ''
+    new_snapshot           = ''
+    # This parameter has a default so we can already pull that value without worrying about an exception
+    original_source_branch = args['original_source_branch']
+    try:
+        repository             = args['repository']
+        new_release            = args['new_release']
+        local_branch_name      = args['local_branch']
+        stable_branch          = args['stable_branch']
+        new_snapshot           = args['new_snapshot_release']
+    except:
+        print '***** Required parameter missing.'
+        help()
+        exit(1)
+
+    cloneRepository(repository)
+
+    # Change to the cloned git repository
+    os.chdir(REPOSITORY_NAME)
+
+    # Surround all of this with a try so we can ensure the remote repository is removed on failure or interruption.
+    try:
+        print ''
+        print 'Git environment check.'
+        sys.stdout.flush()
+        release_tag_exists = False
+        local_branch_exists = False
+        stable_branch_exists = False
+        git_environment_check_pass = True
+
+        # Run through the list of branches and look for local_branch_name and stable_branch
+        (output, err) = runExternalCommand('git branch -a')
+        
+        lines = output.split('\n')
+        for line in lines:
+            if line:
+                if not line.startswith('*'):
+                    words = line.split('/')
+                    if words[2] == local_branch_name:
+                        local_branch_exists = True
+                    if words[2] == stable_branch:
+                        stable_branch_exists = True
+
+        # Run through the list of tags and look for new_release
+        (output, err) = runExternalCommand('git tag -l')
+
+        lines = output.split('\n')
+        for line in lines:
+            if line:
+                if line.startswith(new_release):
+                    release_tag_exists = True
+                    break
+
+        if local_branch_exists:
+            print ''
+            print 'Local branch {} already exists'.format(local_branch_name)
+            print 'Either delete the local branch or supply another local branch name'
+            print 'that has yet to be created.'
+            git_environment_check_pass = False
+
+        if not stable_branch_exists:
+            print ''
+            print 'Stable branch {} does not exist'.format(stable_branch)
+            print 'Check that the correct name has been given.'
+            git_environment_check_pass = False
+
+        if release_tag_exists:
+            print ''
+            print 'Release tag {} already exists'.format(new_release)
+            print 'Either delete the existing release tag or supply another release'
+            print 'tag that has yet to be created.'
+            git_environment_check_pass = False
+
+        if not git_environment_check_pass:
+            print ''
+            print 'The git environment check has failed.'
+            print 'Please take the corrective actions above and restart the command.'
+            raise Exception('Git Environment Failure')
+
+        print ''
+        print 'Git environment check passed.'
+        sys.stdout.flush()
+
+
+        # Checkout the source branch supplied. Defaults to master.
+        print ''
+        print 'Checking out branch {}'.format(original_source_branch)
+        sys.stdout.flush()
+        (output, err) = runExternalCommand('git checkout {}'.format(original_source_branch))
+
+        # Create a list of locally generated artifacts to exclude from dependency later downstream
+        locally_generated_artifacts = getLocalGeneratedArtifacts()
+
+        dependent_artifacts = getMavenDependentArtifacts(locally_generated_artifacts)
+
+        # Hard code the repositories that we are looking.
+        # Thought about deriving this from root pom but this could be spoofed by a
+        # careful/unconscious change in a local root-parent.
+        maven_central_url       = 'https://repo1.maven.org/maven2'
+        palantir_repository_url = 'http://palantir.bintray.com/releases'
+
+        # Keep a list of artifacts not found so we can output a summary failure line at the end.
+        unsatisfied_artifacts = []
+
+        # Keep a list of artifacts in which the snapshot version was changed to a release version.
+        dependent_snapshot_artifacts = []
+
+        print ''
+        print 'Ensuring each dependent artifact is available externally.'
+        sys.stdout.flush()
+
+        for artifact in sorted(dependent_artifacts):
+            artifact_elements = artifact.split(':')
+            organization      = artifact_elements[0]
+            id                = artifact_elements[1]
+            type              = artifact_elements[2]
+            version           = artifact_elements[3]
+            organization_path = organization.replace('.','/')
+            remote_repository_url = ''
+            artifact = '{}:{}:{}:{}'.format(organization, id, type, version)
+            # Default to maven_central_url for artifact location
+            remote_repository_url = maven_central_url
+            # Take into account the palantir bintray repository that is included in the latest
+            # version of the root-parent.
+            if organization.startswith('com.palantir'):
+                remote_repository_url = palantir_repository_url
+
+            # We don't deal with SNAPSHOTs so if found convert the version to a release version and proceed
+            if version.endswith('SNAPSHOT'):
+                print ''
+                print 'Found a snapshot version    {}'.format(artifact)
+                sys.stdout.flush()
+                dependent_snapshot_artifacts.append(artifact)
+
+
+            # Test for the existence of the artifact in the remote repository
+            (output, err) = runExternalCommand('curl -I -s {}/{}/{}/{}/{}-{}.{}'.format(remote_repository_url, organization_path, id, version, id, version, type))
+
+            lines = output.split('\n')
+            for line in lines:
+                split_line = line.split()
+                if len(split_line) > 1 and split_line[0].startswith('HTTP'):
+                    # Lets make things a little neater in the log files.
+                    spaced_artifact = '{0: <80}'.format(artifact)
+                    if split_line[1] != '200':
+                        # Anything other than a 200 return code we consider an error.
+                        print '***** Artifact {} not found in remote repository {}.'.format(spaced_artifact, remote_repository_url)
+                        unsatisfied_artifacts.append(['{}'.format(artifact), remote_repository_url])
+                    else:
+                        print 'Found artifact {} in remote repository {}.'.format(spaced_artifact, remote_repository_url)
+            sys.stdout.flush()
+
+        # Set a boolean so we can check for a number of reasons that the audit would fail.
+        audit_failure = False
+
+        if unsatisfied_artifacts:
+            audit_failure = True
+            print ''
+            print 'The following artifacts were not satisfied through external repositories'
+            for element in unsatisfied_artifacts:
+                print 'Artifact {} not found in repository {}'.format(element[0], element[1])
+            print ''
+            sys.stdout.flush()
+
+        if dependent_snapshot_artifacts:
+            audit_failure = True
+            print ''
+            print 'The following snapshot artifacts will have to migrated to release versions. '
+            for element in dependent_snapshot_artifacts:
+                print 'Artifact "{}"'.format(element)
+            print ''
+            sys.stdout.flush()
+
+        if audit_failure:
+            print 'The precheck audit failed.'
+            sys.stdout.flush()
+            get_out_and_remove_local_git_repository()
+            exit(1)
+
+        print ''
+        print 'The precheck audit passed.'
+        sys.stdout.flush()
+
+        print ''
+        print 'Create and checkout the new branch.'
+        sys.stdout.flush()
+        (output, err) = runExternalCommand('git checkout -b {}'.format(local_branch_name))
+
+        print ''
+        print 'Push the newly created branch to the remote github.'
+        sys.stdout.flush()
+        (output, err) = runExternalCommand('git push -u origin {}'.format(local_branch_name))
+
+        print ''
+        print 'Run the mvn release:prepare command'
+        print 'This may take a while....'
+        sys.stdout.flush()
+        (output, err) = runExternalCommand('mvn --batch-mode -Dproject.rel.com.dell.cpsd={} -Dproject.dev.com.dell.cpsd={} release:prepare'.format(new_release, new_snapshot))
+
+        print ''
+        print 'Check the git log for the last two commits'
+        sys.stdout.flush()
+        (output, err) = runExternalCommand('git log -n 2')
+
+        release_commit = ''
+        snapshot_commit = ''
+        lines = output.split('\n')
+        for line in lines:
+            # Split the line into words
+            split_line = line.split()
+            # To avoid empty lines
+            if split_line:
+                # Only interested in the commit lines
+                if split_line[0] == 'commit':
+                    if snapshot_commit:
+                        release_commit = split_line[1]
+                        # Found both of the commits by now. No need to keep looping
+                        break
+                    else:
+                        snapshot_commit = split_line[1]
+        print ''
+        print 'The snapshot commit is at sha {}'.format(snapshot_commit)
+        print 'The release commit is at  sha {}'.format(release_commit)
+        sys.stdout.flush()
+
+        print ''
+        print 'Create the snapshot pull request from current branch back to master.'
+        sys.stdout.flush()
+        (output, err) = runExternalCommand('git push')
+        (output, err) = runExternalCommand('hub pull-request -m "Update to new snapshot"')
+
+        print ''
+        print 'In order to create a release pull request we must first create another branch from the release commit'
+        sys.stdout.flush()
+        (output, err) = runExternalCommand('git checkout {}'.format(release_commit))
+        release_branch = 'release_{}'.format(new_release)
+        (output, err) = runExternalCommand('git checkout -b {}'.format(release_branch))
+        (output, err) = runExternalCommand('git push origin {}'.format(release_branch))
+
+        print ''
+        print 'Now create the pull request for the release branch.'
+        sys.stdout.flush()
+        (output, err) = runExternalCommand('hub pull-request -b {} -m "New release version"'.format(stable_branch))
+
+        print ''
+        print 'All done. Pull requests will have to be approved and merged.'
+        sys.stdout.flush()
+
+        # Leave the area as you found it.
+        print ''
+        print 'Removing local cloned repository.'
+    except:
+        print ''
+        print 'Exception caught, cleaning up.'
+        return_code=1
+
+    get_out_and_remove_local_git_repository()
+    exit(return_code)
+
+if __name__ == '__main__':
+    main()
