@@ -25,6 +25,7 @@ def incrementVersion(m):
     major,minor,patch = map(int, myVersion.split("."))
     if m == "major":
        major += 1
+       minor = patch = 0
     if m == "minor":
        minor += 1
     if m == "patch":
