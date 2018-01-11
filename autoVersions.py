@@ -45,9 +45,10 @@ def setVersion(version):
     os.system(cmd)
 
 
-if __name__ == "__main__":
-  relVersion, snapshotVersion, branchName = incrementVersion()
-  print relVersion
-  print snapshotVersion
-  print branchName
+# if __name__ == "__main__":
+#   relVersion, snapshotVersion, branchName = incrementVersion()
+#   print relVersion
+#   print snapshotVersion
+#   print branchName
+
   #setVersion(newVersion)
