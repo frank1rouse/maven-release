@@ -13,6 +13,9 @@ import shutil
 import argparse
 import platform
 import subprocess
+
+import autoVersions
+
 from chainmap import  ChainMap
 from StringIO import StringIO
 from ConfigParser import ConfigParser
@@ -72,8 +75,15 @@ def getArguments():
     # Create a dictionary of the given parser command line inputs
     command_line_args = {k:v for k,v in vars(namespace).items() if v}
 
+    # autoVersion settings
+    auto_version = {}
+    relVersion, snapshotVersion, branchName = autoVersions.incrementVersion()
+    auto_version['new_release'] = relVersion
+    auto_version['new_snapshot_release'] = snapshotVersion
+    auto_version['stable_branch'] = branchName
+
     # Now create a chainmap of all the dictionaries in the order of precedence.
-    return ChainMap(command_line_args, os.environ, property_file_properties, program_defaults)
+    return ChainMap(command_line_args, os.environ, auto_version, property_file_properties, program_defaults)
 
 def help():
     print 'Required parameters'
