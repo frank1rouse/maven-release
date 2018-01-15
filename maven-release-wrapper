@@ -135,7 +135,16 @@ def getArguments():
     repo = namespace.repository
     # clone repo to assess release version
     cloneRepository(repo)
-    relVersion, snapshotVersion, branchName = autoVersions.incrementVersion()
+    # Change to the cloned git repository
+    os.chdir(REPOSITORY_NAME)
+    # Get release versions from repository
+    try:
+        relVersion, snapshotVersion, branchName = autoVersions.incrementVersion()
+
+    except:
+        get_out_and_remove_local_git_repository()
+        exit(1)
+
     auto_version['new_release'] = relVersion
     auto_version['new_snapshot_release'] = snapshotVersion
     auto_version['stable_branch'] = branchName
@@ -253,9 +262,6 @@ def main():
         get_out_and_remove_local_git_repository()
         exit(1)
 
-
-    # Change to the cloned git repository
-    os.chdir(REPOSITORY_NAME)
 
     # Surround all of this with a try so we can ensure the remote repository is removed on failure or interruption.
     try:
