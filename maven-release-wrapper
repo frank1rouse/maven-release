@@ -43,61 +43,6 @@ from ConfigParser import ConfigParser
 # git config --global credential.helper 'cache --timeout=3600'
 
 
-def getArguments():
-    # Program Internal settings
-    # I know that it is slower to load this way but it is more explicit and readable in my opinion
-    program_defaults = {}
-    program_defaults['original_source_branch'] = 'master'
-
-    # Property File settings
-    property_file_name = os.path.splitext(os.path.basename(__file__))[0] + '.props'
-    property_file_path = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(property_file_name))) + os.sep + property_file_name
-    property_file_properties = {}
-    #If no property file exists, don't sweat it just keep going.
-    try:
-        config = ConfigParser()
-        with open(property_file_path) as stream:
-            stream = StringIO("[root]\n" + stream.read())
-        config.readfp(stream)
-        property_file_properties =  dict(config.items('root'))
-    except IOError:
-        pass
-
-    # Command Line settings
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-repo', '--repository',             help='Repository in which changes will be made. Full https url required.')
-    parser.add_argument('-lb',   '--local_branch',           help='Local branch in which changes will be made.')
-    parser.add_argument('-osb',  '--original_source_branch', help='Original source branch. Defaults to "master".')
-    parser.add_argument('-sb',   '--stable_branch',          help='Stable branch to which pull request will be made.')
-    parser.add_argument('-nr',   '--new_release',            help='New release number.')
-    parser.add_argument('-nsr',  '--new_snapshot_release',   help='New snapshot release number.')
-    namespace = parser.parse_args()
-    # Create a dictionary of the given parser command line inputs
-    command_line_args = {k:v for k,v in vars(namespace).items() if v}
-
-    # autoVersion settings
-    auto_version = {}
-    relVersion, snapshotVersion, branchName = autoVersions.incrementVersion()
-    auto_version['new_release'] = relVersion
-    auto_version['new_snapshot_release'] = snapshotVersion
-    auto_version['stable_branch'] = branchName
-
-    # Now create a chainmap of all the dictionaries in the order of precedence.
-    return ChainMap(command_line_args, os.environ, auto_version, property_file_properties, program_defaults)
-
-def help():
-    print 'Required parameters'
-    print '-repo or --repository             Repository in which changes will be made. Full https url required.'
-    print '-lb   or --local_branch           Local branch in which changes will be made.'
-    print ''
-    print 'Optional parameter'
-    print '-osb   or --original_source_branch   Original source branch. Defaults to "master".'
-    print '-sb   or --stable_branch          Stable branch to which pull request will be made.'
-    print '-nr   or --new_release            New release number.'
-    print '-nsr  or --new_snapshot_release   New snapshot release number.'
-    print ''
-
-
 def runExternalCommand(cmd):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
     (output, err) = p.communicate()
@@ -151,6 +96,64 @@ def cloneRepository(repository):
         (output, err) = runExternalCommand('git clone {}'.format(repository))
     except:
         exit(1)
+
+
+def getArguments():
+    # Program Internal settings
+    # I know that it is slower to load this way but it is more explicit and readable in my opinion
+    program_defaults = {}
+    program_defaults['original_source_branch'] = 'master'
+
+    # Property File settings
+    property_file_name = os.path.splitext(os.path.basename(__file__))[0] + '.props'
+    property_file_path = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(property_file_name))) + os.sep + property_file_name
+    property_file_properties = {}
+    #If no property file exists, don't sweat it just keep going.
+    try:
+        config = ConfigParser()
+        with open(property_file_path) as stream:
+            stream = StringIO("[root]\n" + stream.read())
+        config.readfp(stream)
+        property_file_properties =  dict(config.items('root'))
+    except IOError:
+        pass
+
+    # Command Line settings
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-repo', '--repository',             help='Repository in which changes will be made. Full https url required.')
+    parser.add_argument('-lb',   '--local_branch',           help='Local branch in which changes will be made.')
+    parser.add_argument('-osb',  '--original_source_branch', help='Original source branch. Defaults to "master".')
+    parser.add_argument('-sb',   '--stable_branch',          help='Stable branch to which pull request will be made.')
+    parser.add_argument('-nr',   '--new_release',            help='New release number.')
+    parser.add_argument('-nsr',  '--new_snapshot_release',   help='New snapshot release number.')
+    namespace = parser.parse_args()
+    # Create a dictionary of the given parser command line inputs
+    command_line_args = {k:v for k,v in vars(namespace).items() if v}
+
+    # autoVersion settings
+    auto_version = {}
+    repo = namespace.repository
+    # clone repo to assess release version
+    cloneRepository(repo)
+    relVersion, snapshotVersion, branchName = autoVersions.incrementVersion()
+    auto_version['new_release'] = relVersion
+    auto_version['new_snapshot_release'] = snapshotVersion
+    auto_version['stable_branch'] = branchName
+
+    # Now create a chainmap of all the dictionaries in the order of precedence.
+    return ChainMap(command_line_args, os.environ, auto_version, property_file_properties, program_defaults)
+
+def help():
+    print 'Required parameters'
+    print '-repo or --repository             Repository in which changes will be made. Full https url required.'
+    print '-lb   or --local_branch           Local branch in which changes will be made.'
+    print ''
+    print 'Optional parameter'
+    print '-osb  or --original_source_branch   Original source branch. Defaults to "master".'
+    print '-sb   or --stable_branch          Stable branch to which pull request will be made.'
+    print '-nr   or --new_release            New release number.'
+    print '-nsr  or --new_snapshot_release   New snapshot release number.'
+    print ''
 
 
 def getLocalGeneratedArtifacts():
@@ -237,19 +240,19 @@ def main():
     new_snapshot           = ''
     # This parameter has a default so we can already pull that value without worrying about an exception
     original_source_branch = args['original_source_branch']
-    stable_branch          = args['stable_branch']
-    new_snapshot           = args['new_snapshot_release']
-    new_release            = args['new_release']
 
     try:
+        stable_branch = args['stable_branch']
+        new_snapshot = args['new_snapshot_release']
+        new_release = args['new_release']
         repository             = args['repository']
         local_branch_name      = args['local_branch']
     except:
         print '***** Required parameter missing.'
         help()
+        get_out_and_remove_local_git_repository()
         exit(1)
 
-    cloneRepository(repository)
 
     # Change to the cloned git repository
     os.chdir(REPOSITORY_NAME)
