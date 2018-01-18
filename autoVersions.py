@@ -5,11 +5,13 @@ import os
 import re
 #
 def currentVersion():
-        if os.path.isfile("./pom.xml"):
+        path = os.getcwd()
+        file_path = os.path.join(path, "pom.xml")
+
+        if os.path.isfile(file_path):
             version = os.popen("/usr/bin/mvn -q -Dexec.executable=\"echo\" -Dexec.args='${project.version}' --non-recursive exec:exec").readlines()
         else:
-            print "pom.xmk file not found - Make sure you run this command at top of repo"
-            sys.exit()
+            raise Exception("pom.xml file not found - Make sure you run this command at top of repo")
         return version[0].rstrip()
 
 def isSnapshot(version):
@@ -36,7 +38,9 @@ def incrementVersion():
         major += 1
         minor = patch = 0
         relVersion = str(major)+ "." + str(minor) + "." + str(patch)
-        newVersion = relVersion + "-SNAPSHOT"
+
+        minor += 1
+        newVersion = str(major)+ "." + str(minor) + "." + str(patch) + "-SNAPSHOT"
 
     return(relVersion, newVersion, relBranches[major])
 
@@ -45,9 +49,10 @@ def setVersion(version):
     os.system(cmd)
 
 
-if __name__ == "__main__":
-  relVersion, snapshotVersion, branchName = incrementVersion()
-  print relVersion
-  print snapshotVersion
-  print branchName
+# if __name__ == "__main__":
+#   relVersion, snapshotVersion, branchName = incrementVersion()
+#   print relVersion
+#   print snapshotVersion
+#   print branchName
+
   #setVersion(newVersion)
