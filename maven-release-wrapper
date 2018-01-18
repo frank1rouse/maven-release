@@ -45,6 +45,7 @@ def getArguments():
     # I know that it is slower to load this way but it is more explicit and readable in my opinion
     program_defaults = {}
     program_defaults['original_source_branch'] = 'master'
+    program_defaults['maven_release_plugin_version'] = '2.5.3'
 
     # Property File settings
     property_file_name = os.path.splitext(os.path.basename(__file__))[0] + '.props'
@@ -62,12 +63,13 @@ def getArguments():
 
     # Command Line settings
     parser = argparse.ArgumentParser()
-    parser.add_argument('-repo', '--repository',             help='Repository in which changes will be made. Full https url required.')
-    parser.add_argument('-lb',   '--local_branch',           help='Local branch in which changes will be made.')
-    parser.add_argument('-osb',  '--original_source_branch', help='Original source branch. Defaults to "master".')
-    parser.add_argument('-sb',   '--stable_branch',          help='Stable branch to which pull request will be made.')
-    parser.add_argument('-nr',   '--new_release',            help='New release number.')
-    parser.add_argument('-nsr',  '--new_snapshot_release',   help='New snapshot release number.')
+    parser.add_argument('-repo', '--repository',                   help='Repository in which changes will be made. Full https url required.')
+    parser.add_argument('-lb',   '--local_branch',                 help='Local branch in which changes will be made.')
+    parser.add_argument('-osb',  '--original_source_branch',       help='Original source branch. Defaults to "master".')
+    parser.add_argument('-sb',   '--stable_branch',                help='Stable branch to which pull request will be made.')
+    parser.add_argument('-nr',   '--new_release',                  help='New release number.')
+    parser.add_argument('-nsr',  '--new_snapshot_release',         help='New snapshot release number.')
+    parser.add_argument('-mrpv', '--maven_release_plugin_version', help='Ibid. Defaults to 2.5.3')
     namespace = parser.parse_args()
     # Create a dictionary of the given parser command line inputs
     command_line_args = {k:v for k,v in vars(namespace).items() if v}
@@ -84,7 +86,8 @@ def help():
     print '-nsr  or --new_snapshot_release   New snapshot release number.'
     print ''
     print 'Optional parameter'
-    print '-osb   or --original_source_branch   Original source branch. Defaults to "master".'
+    print '-osb  or --original_source_branch        Defaults to "master".'
+    print '-mrpv or --maven_release_plugin_version  Defaults to 2.5.3'
     print ''
 
 
@@ -225,8 +228,9 @@ def main():
     local_branch_name      = ''
     stable_branch          = ''
     new_snapshot           = ''
-    # This parameter has a default so we can already pull that value without worrying about an exception
+    # Thess parameters have a default so we can already pull that value without worrying about an exception
     original_source_branch = args['original_source_branch']
+    maven_release_plugin_version = args['maven_release_plugin_version']
     try:
         repository             = args['repository']
         new_release            = args['new_release']
@@ -420,8 +424,7 @@ def main():
         print 'Run the mvn release:prepare command'
         print 'This may take a while....'
         sys.stdout.flush()
-        (output, err) = runExternalCommand('mvn --batch-mode -Dproject.rel.com.dell.cpsd={} -Dproject.dev.com.dell.cpsd={} release:prepare'.format(new_release, new_snapshot))
-
+        (output, err) = runExternalCommand('mvn --batch-mode -Dproject.rel.com.dell.cpsd={} -Dproject.dev.com.dell.cpsd={} org.apache.maven.plugins:maven-release-plugin:{}:prepare'.format(new_release, new_snapshot, maven_release_plugin_version))
         print ''
         print 'Check the git log for the last two commits'
         sys.stdout.flush()
