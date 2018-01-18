@@ -38,7 +38,9 @@ def incrementVersion():
         major += 1
         minor = patch = 0
         relVersion = str(major)+ "." + str(minor) + "." + str(patch)
-        newVersion = relVersion + "-SNAPSHOT"
+
+        minor += 1
+        newVersion = str(major)+ "." + str(minor) + "." + str(patch) + "-SNAPSHOT"
 
     return(relVersion, newVersion, relBranches[major])
 
