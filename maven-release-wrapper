@@ -424,7 +424,7 @@ def main():
         print 'Run the mvn release:prepare command'
         print 'This may take a while....'
         sys.stdout.flush()
-        (output, err) = runExternalCommand('mvn --batch-mode -Dproject.rel.com.dell.cpsd={} -Dproject.dev.com.dell.cpsd={} org.apache.maven.plugins:maven-release-plugin:{}:prepare'.format(new_release, new_snapshot, maven_release_plugin_version))
+        (output, err) = runExternalCommand('mvn --batch-mode -DreleaseVersion={} -DdevelopmentVersion={} org.apache.maven.plugins:maven-release-plugin:{}:prepare'.format(new_release, new_snapshot, maven_release_plugin_version))
         print ''
         print 'Check the git log for the last two commits'
         sys.stdout.flush()
